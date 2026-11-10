@@ -1,0 +1,100 @@
+name: Unity builds
+
+on:
+  push:
+    tags:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: Build Windows (requires CI-Windows profile)
+        type: boolean
+        default: false
+      build_macos:
+        description: Build macOS (requires CI-macOS profile)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unity-personal-builds
+  cancel-in-progress: false
+
+jobs:
+  platforms:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        shell: bash
+        env:
+          BUILD_WINDOWS: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows || github.event_name != 'workflow_dispatch' && vars.UNITY_BUILD_WINDOWS == 'true' }}
+          BUILD_MACOS: ${{ github.event_name == 'workflow_dispatch' && inputs.build_macos || github.event_name != 'workflow_dispatch' && vars.UNITY_BUILD_MACOS == 'true' }}
+        run: |
+          matrix='[{"platform":"WebGL","profile":"CI-Web","name":"Web"}]'
+          if [[ "$BUILD_WINDOWS" == "true" ]]; then
+            matrix=$(jq -c '. + [{"platform":"StandaloneWindows64","profile":"CI-Windows","name":"Windows"}]' <<< "$matrix")
+          fi
+          if [[ "$BUILD_MACOS" == "true" ]]; then
+            matrix=$(jq -c '. + [{"platform":"StandaloneOSX","profile":"CI-macOS","name":"macOS"}]' <<< "$matrix")
+          fi
+          echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: platforms
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          lfs: true
+          persist-credentials: false
+      - name: Check Unity version, profile and secrets
+        shell: bash
+        env:
+          PROFILE: ${{ matrix.profile }}
+          PLATFORM: ${{ matrix.platform }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if ! grep -Eq '^m_EditorVersion: 6000\.' ProjectSettings/ProjectVersion.txt; then
+            echo "::error::Unity 6 (6000.x) is required for Build Profiles."
+            exit 1
+          fi
+          if [[ ! -f "Assets/BuildProfiles/$PROFILE.asset" ]]; then
+            echo "::error::Missing Assets/BuildProfiles/$PROFILE.asset. In Unity 6 File > Build Profiles, create and save this exact case-sensitive profile for $PLATFORM, configure enabled scenes, and commit its .asset and .meta files. Names: CI-Web (Web), CI-Windows (Windows), CI-macOS (macOS). Desktop profiles must use Mono for Linux cross-compilation. See the autosetup-unity-cicd README."
+            exit 1
+          fi
+          if [[ -z "$UNITY_LICENSE" || -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ]]; then
+            echo "::error::Missing UNITY_LICENSE, UNITY_EMAIL or UNITY_PASSWORD. Run Setup-UnityCI.ps1 and use the same Personal account for all three secrets."
+            exit 1
+          fi
+      - name: Build using the named profile
+        uses: game-ci/unity-builder@4423ee75828dff56037d1d1cfdac6b68e3a6ba00 # v4.8.2
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: ${{ matrix.platform }}
+          buildProfile: Assets/BuildProfiles/${{ matrix.profile }}.asset
+          buildName: ${{ matrix.name }}
+          buildsPath: build
+          versioning: None
+      - name: Package macOS build preserving executable permissions
+        if: matrix.platform == 'StandaloneOSX'
+        run: tar -czf build/Unity-macOS.tar.gz -C build/StandaloneOSX .
+      - name: Upload build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Unity-${{ matrix.name }}
+          path: ${{ matrix.platform == 'StandaloneOSX' && 'build/Unity-macOS.tar.gz' || format('build/{0}', matrix.platform) }}
+          if-no-files-found: error
