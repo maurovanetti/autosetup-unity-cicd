@@ -144,7 +144,7 @@ try {
     if ($Repository -notmatch '^[^/\s]+/[^/\s]+$') {
         throw 'Repository must be specified as owner/repo.'
     }
-    $repositoryJson = & $gh repo view --repo $Repository --json 'nameWithOwner,defaultBranchRef'
+    $repositoryJson = & $gh repo view $Repository --json 'nameWithOwner,defaultBranchRef'
     Assert-NativeSuccess 'Cannot identify the GitHub repository. Check the Git remote and your repository permissions.'
     $repositoryInfo = $repositoryJson | ConvertFrom-Json
     $repository = $repositoryInfo.nameWithOwner
