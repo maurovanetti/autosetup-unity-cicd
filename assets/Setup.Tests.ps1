@@ -6,6 +6,9 @@ BeforeAll {
         $global:LASTEXITCODE = 0
         switch ($arguments[0]) {
             'repo' { '{"nameWithOwner":"example/project","defaultBranchRef":{"name":"main"}}' }
+            'variable' {
+                if ($global:UnityCiTest.VariableFails) { $global:LASTEXITCODE = 1 }
+            }
             'api' {
                 if ($arguments[1] -like '*/git/trees/*') {
                     @{ truncated = $false; tree = $global:UnityCiTest.RemoteFiles } | ConvertTo-Json -Depth 4
@@ -42,6 +45,7 @@ Describe 'Standalone Unity CI setup' {
             GitCalls = [Collections.Generic.List[object]]::new()
             RemoteFiles = @()
             UploadFails = $false
+            VariableFails = $false
             ActivationFails = $false
             DownloadDirectory = $null
             CredentialHelper = $null
@@ -105,6 +109,9 @@ Describe 'Standalone Unity CI setup' {
         $secretCalls[0].Arguments -join ' ' | Should -Be 'secret set UNITY_LICENSE --repo example/project'
         $secretCalls[1].Arguments[2] | Should -Be 'UNITY_EMAIL'
         $secretCalls[2].Arguments[2] | Should -Be 'UNITY_PASSWORD'
+        $variableCalls = @($script:calls | Where-Object { $_.Tool -eq 'gh' -and $_.Arguments[0] -eq 'variable' })
+        $variableCalls.Count | Should -Be 1
+        $variableCalls[0].Arguments -join ' ' | Should -Be 'variable set UNITY_BUILD_WEB --repo example/project --body TRUE'
         $payload = $script:calls[-1].Input | ConvertFrom-Json
         $payload.branch | Should -Be 'main'
         [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload.content)) | Should -Match 'name: test workflow'
@@ -116,7 +123,7 @@ Describe 'Standalone Unity CI setup' {
     It 'requires explicit consent before changing secrets or activating Unity' {
         Mock Read-Host { 'no' }
         { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*cancelled*'
-        @($script:calls | Where-Object { $_.Tool -eq 'unity' -or $_.Arguments[0] -eq 'secret' }).Count | Should -Be 0
+        @($script:calls | Where-Object { $_.Tool -eq 'unity' -or $_.Arguments[0] -in @('secret', 'variable') }).Count | Should -Be 0
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 
@@ -172,6 +179,13 @@ Describe 'Standalone Unity CI setup' {
     It 'reports a remote commit failure and cleans up the download' {
         $global:UnityCiTest.UploadFails = $true
         { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*Could not commit the workflow*'
+        Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+    }
+
+    It 'stops before committing the workflow if the Web variable cannot be set' {
+        $global:UnityCiTest.VariableFails = $true
+        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*Could not set UNITY_BUILD_WEB*'
+        @($script:calls | Where-Object { $_.Arguments -contains 'PUT' }).Count | Should -Be 0
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 

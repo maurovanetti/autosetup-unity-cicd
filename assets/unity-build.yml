@@ -6,6 +6,10 @@ on:
       - '**'
   workflow_dispatch:
     inputs:
+      build_web:
+        description: Build Web (requires CI-Web profile)
+        type: boolean
+        default: true
       build_windows:
         description: Build Windows (requires CI-Windows profile)
         type: boolean
@@ -27,14 +31,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
+      has_builds: ${{ steps.select.outputs.has_builds }}
     steps:
       - id: select
         shell: bash
         env:
+          BUILD_WEB: ${{ github.event_name == 'workflow_dispatch' && inputs.build_web || github.event_name != 'workflow_dispatch' && vars.UNITY_BUILD_WEB == 'true' }}
           BUILD_WINDOWS: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows || github.event_name != 'workflow_dispatch' && vars.UNITY_BUILD_WINDOWS == 'true' }}
           BUILD_MACOS: ${{ github.event_name == 'workflow_dispatch' && inputs.build_macos || github.event_name != 'workflow_dispatch' && vars.UNITY_BUILD_MACOS == 'true' }}
         run: |
-          matrix='[{"platform":"WebGL","profile":"CI-Web","name":"Web"}]'
+          matrix='[]'
+          if [[ "$BUILD_WEB" == "true" ]]; then
+            matrix=$(jq -c '. + [{"platform":"WebGL","profile":"CI-Web","name":"Web"}]' <<< "$matrix")
+          fi
           if [[ "$BUILD_WINDOWS" == "true" ]]; then
             matrix=$(jq -c '. + [{"platform":"StandaloneWindows64","profile":"CI-Windows","name":"Windows"}]' <<< "$matrix")
           fi
@@ -42,10 +51,12 @@ jobs:
             matrix=$(jq -c '. + [{"platform":"StandaloneOSX","profile":"CI-macOS","name":"macOS"}]' <<< "$matrix")
           fi
           echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"
+          echo "has_builds=$(jq 'length > 0' <<< "$matrix")" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
     needs: platforms
+    if: needs.platforms.outputs.has_builds == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
