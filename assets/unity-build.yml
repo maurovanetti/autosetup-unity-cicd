@@ -89,9 +89,12 @@ jobs:
           buildName: ${{ matrix.name }}
           buildsPath: build
           versioning: None
+      - name: Package macOS build preserving executable permissions
+        if: matrix.platform == 'StandaloneOSX'
+        run: tar -czf build/Unity-macOS.tar.gz -C build/StandaloneOSX .
       - name: Upload build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Unity-${{ matrix.name }}
-          path: build/${{ matrix.platform }}
+          path: ${{ matrix.platform == 'StandaloneOSX' && 'build/Unity-macOS.tar.gz' || format('build/{0}', matrix.platform) }}
           if-no-files-found: error

@@ -3,7 +3,8 @@
 param(
     [string] $UnityCli,
     [string] $LicensePath = "$env:ProgramData\Unity\Unity_lic.ulf",
-    [string] $AssetRef = 'main'
+    [string] $AssetRef = 'main',
+    [string] $Repository
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,12 +99,52 @@ try {
         Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $tempDirectory 'gh')
         $executables = @(Get-ChildItem (Join-Path $tempDirectory 'gh') -Filter gh.exe -Recurse -File)
         if ($executables.Count -ne 1) { throw 'The portable GitHub CLI archive has an unexpected layout.' }
-        $gh = $executables[0].FullName
+        $portableGhDirectory = Join-Path $env:LOCALAPPDATA 'GitHubCLI\bin'
+        New-Item -ItemType Directory -Path $portableGhDirectory -Force | Out-Null
+        $gh = Join-Path $portableGhDirectory 'gh.exe'
+        Copy-Item -LiteralPath $executables[0].FullName -Destination $gh -Force
     }
 
-    & $gh auth login --hostname github.com --git-protocol https --web --scopes 'repo,workflow'
-    Assert-NativeSuccess 'GitHub login failed. Remove GH_TOKEN/GITHUB_TOKEN from this shell if they prevent interactive login.'
-    $repositoryJson = & $gh repo view --json 'nameWithOwner,defaultBranchRef'
+    $credentialHelpers = @(& git config --get-urlmatch credential.helper 'https://github.com' 2>$null)
+    $hasCredentialHelper = $LASTEXITCODE -eq 0 -and @($credentialHelpers | Where-Object { $_ }).Count -gt 0
+    $oldGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
+    if ($hasCredentialHelper) {
+        Write-Host 'An existing Git credential helper was found. Its persistent configuration will be protected during GitHub CLI login.'
+        $env:GIT_CONFIG_GLOBAL = Join-Path $tempDirectory 'gitconfig'
+    } else {
+        Write-Host 'No Git credential helper was found. GitHub CLI may offer to configure one during login.'
+    }
+    try {
+        & $gh auth login --hostname github.com --web --scopes 'repo,workflow'
+        Assert-NativeSuccess 'GitHub login failed. Remove GH_TOKEN/GITHUB_TOKEN from this shell if they prevent interactive login.'
+    } finally {
+        $env:GIT_CONFIG_GLOBAL = $oldGitConfigGlobal
+    }
+
+    if (-not $Repository) {
+        $currentBranch = & git branch --show-current 2>$null
+        $pushRemote = $null
+        if ($LASTEXITCODE -eq 0 -and $currentBranch) {
+            $pushRemote = & git config --get "branch.$currentBranch.pushRemote" 2>$null
+            if ($LASTEXITCODE -ne 0) { $pushRemote = $null }
+        }
+        if (-not $pushRemote) {
+            $pushRemote = & git config --get remote.pushDefault 2>$null
+            if ($LASTEXITCODE -ne 0) { $pushRemote = $null }
+        }
+        if (-not $pushRemote) { $pushRemote = 'origin' }
+        $pushUrl = & git remote get-url --push $pushRemote
+        Assert-NativeSuccess "Cannot resolve the push URL for Git remote '$pushRemote'. Supply -Repository owner/repo to select the target explicitly."
+        $remoteMatch = [regex]::Match($pushUrl.Trim(), '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<name>[^/]+/[^/]+?)(?:\.git)?/?$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $remoteMatch.Success) {
+            throw "Cannot identify a GitHub repository from remote '$pushRemote'. Supply -Repository owner/repo to select the target explicitly."
+        }
+        $Repository = $remoteMatch.Groups['name'].Value
+    }
+    if ($Repository -notmatch '^[^/\s]+/[^/\s]+$') {
+        throw 'Repository must be specified as owner/repo.'
+    }
+    $repositoryJson = & $gh repo view --repo $Repository --json 'nameWithOwner,defaultBranchRef'
     Assert-NativeSuccess 'Cannot identify the GitHub repository. Check the Git remote and your repository permissions.'
     $repositoryInfo = $repositoryJson | ConvertFrom-Json
     $repository = $repositoryInfo.nameWithOwner
@@ -119,7 +160,7 @@ try {
     Assert-NativeSuccess 'Cannot inspect the default branch. Check that the project has been pushed to GitHub.'
     $tree = $treeJson | ConvertFrom-Json
     if ($tree.truncated) { throw 'The repository tree is too large to safely check for an existing workflow.' }
-    $existingWorkflow = $tree.tree | Where-Object { $_.path -eq $workflowPath }
+    $existingWorkflow = $tree.tree | Where-Object { $_.path -ceq $workflowPath }
 
     Write-Host "Target: https://github.com/$repository (branch: $branch)"
     Write-Host "This will set UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD and commit $workflowPath."

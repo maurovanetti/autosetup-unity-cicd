@@ -2,7 +2,7 @@ BeforeAll {
     $script:setup = Join-Path (Split-Path $PSScriptRoot -Parent) 'Setup-UnityCI.ps1'
     function Invoke-TestGh {
         $arguments = @($args)
-        $global:UnityCiTest.Calls.Add([pscustomobject]@{ Tool = 'gh'; Arguments = $arguments; Input = (@($input) -join "`n") })
+        $global:UnityCiTest.Calls.Add([pscustomobject]@{ Tool = 'gh'; Arguments = $arguments; Input = (@($input) -join "`n"); GitConfigGlobal = $env:GIT_CONFIG_GLOBAL })
         $global:LASTEXITCODE = 0
         switch ($arguments[0]) {
             'repo' { '{"nameWithOwner":"example/project","defaultBranchRef":{"name":"main"}}' }
@@ -26,6 +26,7 @@ Describe 'Standalone Unity CI setup' {
         $script:oldOS = $env:OS
         $script:oldArchitecture = $env:PROCESSOR_ARCHITECTURE
         $script:oldWowArchitecture = $env:PROCESSOR_ARCHITEW6432
+        $script:oldLocalAppData = $env:LOCALAPPDATA
         $env:OS = 'Windows_NT'
         $script:project = Join-Path $TestDrive 'Project with spaces'
         New-Item -ItemType Directory -Path "$script:project/Assets", "$script:project/Packages", "$script:project/ProjectSettings" -Force | Out-Null
@@ -38,13 +39,37 @@ Describe 'Standalone Unity CI setup' {
         $script:calls = [Collections.Generic.List[object]]::new()
         $global:UnityCiTest = @{
             Calls = $script:calls
+            GitCalls = [Collections.Generic.List[object]]::new()
             RemoteFiles = @()
             UploadFails = $false
             ActivationFails = $false
             DownloadDirectory = $null
+            CredentialHelper = $null
+            BranchPushRemote = $null
+            DefaultPushRemote = $null
+            PushUrl = 'git@github.com:example/project.git'
+            InstalledGhPath = $null
         }
         Push-Location $script:project
-        Mock git { $global:LASTEXITCODE = 0; (Get-Location).Path }
+        $script:oldGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
+        Mock git {
+            $arguments = @($args)
+            $global:UnityCiTest.GitCalls.Add([pscustomobject]@{ Arguments = $arguments })
+            $global:LASTEXITCODE = 0
+            if ($arguments[0] -eq 'rev-parse') {
+                (Get-Location).Path
+            } elseif ($arguments[0] -eq 'branch') {
+                'feature'
+            } elseif ($arguments[0] -eq 'config' -and $arguments[1] -eq '--get-urlmatch') {
+                if ($global:UnityCiTest.CredentialHelper) { $global:UnityCiTest.CredentialHelper } else { $global:LASTEXITCODE = 1 }
+            } elseif ($arguments[0] -eq 'config' -and $arguments[2] -eq 'branch.feature.pushRemote') {
+                if ($global:UnityCiTest.BranchPushRemote) { $global:UnityCiTest.BranchPushRemote } else { $global:LASTEXITCODE = 1 }
+            } elseif ($arguments[0] -eq 'config' -and $arguments[2] -eq 'remote.pushDefault') {
+                if ($global:UnityCiTest.DefaultPushRemote) { $global:UnityCiTest.DefaultPushRemote } else { $global:LASTEXITCODE = 1 }
+            } elseif ($arguments[0] -eq 'remote') {
+                $global:UnityCiTest.PushUrl
+            }
+        }
         Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestGh' } } -ParameterFilter { $Name -eq 'gh' }
         Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestUnity' } } -ParameterFilter { $Name -eq 'unity' }
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'Invoke-TestUnity' }
@@ -57,15 +82,19 @@ Describe 'Standalone Unity CI setup' {
     }
     AfterEach {
         Pop-Location
+        $env:GIT_CONFIG_GLOBAL = $script:oldGitConfigGlobal
         $env:OS = $script:oldOS
         $env:PROCESSOR_ARCHITECTURE = $script:oldArchitecture
         $env:PROCESSOR_ARCHITEW6432 = $script:oldWowArchitecture
+        $env:LOCALAPPDATA = $script:oldLocalAppData
         Remove-Variable UnityCiTest -Scope Global
     }
 
     It 'logs in, activates Personal, pipes the raw license and commits the workflow' {
         & $script:setup -LicensePath $script:licensePath
-        $script:calls[0].Arguments -join ' ' | Should -Be 'auth login --hostname github.com --git-protocol https --web --scopes repo,workflow'
+        $script:calls[0].Arguments -join ' ' | Should -Be 'auth login --hostname github.com --web --scopes repo,workflow'
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view --repo example/project --json nameWithOwner,defaultBranchRef'
+        @($global:UnityCiTest.GitCalls | Where-Object { $_.Arguments -join ' ' -eq 'remote get-url --push origin' }).Count | Should -Be 1
         $unityCalls = @($script:calls | Where-Object Tool -eq unity)
         $unityCalls.Count | Should -Be 3
         $unityCalls[0].Arguments -join ' ' | Should -Be 'auth login'
@@ -95,6 +124,25 @@ Describe 'Standalone Unity CI setup' {
         $global:UnityCiTest.RemoteFiles = @(@{ path = '.github/workflows/unity-build.yml'; sha = 'previous-blob' })
         & $script:setup -LicensePath $script:licensePath
         ($script:calls[-1].Input | ConvertFrom-Json).sha | Should -Be 'previous-blob'
+    }
+
+    It 'does not reuse a differently-cased workflow path SHA' {
+        $global:UnityCiTest.RemoteFiles = @(@{ path = '.github/workflows/Unity-Build.yml'; sha = 'different-blob' })
+        & $script:setup -LicensePath $script:licensePath
+        ($script:calls[-1].Input | ConvertFrom-Json).sha | Should -BeNullOrEmpty
+    }
+
+    It 'accepts an explicit repository instead of inferring the push remote' {
+        & $script:setup -LicensePath $script:licensePath -Repository 'my-fork/project'
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view --repo my-fork/project --json nameWithOwner,defaultBranchRef'
+    }
+
+    It 'protects an existing Git credential helper during interactive login' {
+        $global:UnityCiTest.CredentialHelper = 'manager-core'
+        $env:GIT_CONFIG_GLOBAL = 'original-gitconfig'
+        & $script:setup -LicensePath $script:licensePath
+        $script:calls[0].GitConfigGlobal | Should -Match 'gitconfig$'
+        $env:GIT_CONFIG_GLOBAL | Should -Be 'original-gitconfig'
     }
 
     It 'rejects a missing license without uploading secrets' {
@@ -154,10 +202,11 @@ Describe 'Standalone Unity CI setup' {
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 
-    It 'verifies and runs a portable CLI when gh is not installed' {
+    It 'keeps the verified portable CLI at a stable per-user path' {
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'gh' }
         $env:PROCESSOR_ARCHITECTURE = 'AMD64'
         $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
+        $env:LOCALAPPDATA = Join-Path $TestDrive 'Local App Data'
         Mock Invoke-RestMethod {
             @{ assets = @(
                 @{ name = 'gh_test_windows_amd64.zip'; browser_download_url = 'https://example.invalid/archive' },
@@ -176,9 +225,16 @@ Describe 'Standalone Unity CI setup' {
         }
         Mock Expand-Archive {}
         Mock Get-ChildItem { [pscustomobject]@{ FullName = 'Invoke-TestGh' } } -ParameterFilter { $Filter -eq 'gh.exe' }
-        & $script:setup -LicensePath $script:licensePath
+        Mock Copy-Item {
+            $global:UnityCiTest.InstalledGhPath = $Destination
+            New-Item -ItemType Directory -Path (Split-Path $Destination) -Force | Out-Null
+            Set-Content -LiteralPath $Destination 'portable executable'
+            throw 'Portable CLI installed for test.'
+        }
+        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*Portable CLI installed for test*'
         Should -Invoke Expand-Archive -Times 1 -Exactly
-        @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' }).Count | Should -Be 3
+        $global:UnityCiTest.InstalledGhPath | Should -Be (Join-Path $env:LOCALAPPDATA 'GitHubCLI\bin\gh.exe')
+        Test-Path -LiteralPath $global:UnityCiTest.InstalledGhPath | Should -BeTrue
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 

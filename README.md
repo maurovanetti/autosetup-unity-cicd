@@ -8,8 +8,10 @@ workflow from this public repository's `assets/` directory itself.
 
 - Windows, PowerShell 5.1+, Git, and an interactive desktop; no administrator
   privileges are needed. An existing `gh` is used, otherwise the official Windows
-  portable ZIP is downloaded, SHA-256 checked against its release manifest, and
-  removed after setup. GitHub login remains in GitHub CLI's normal credential store.
+  portable ZIP is downloaded and SHA-256 checked against its release manifest.
+  The verified executable is kept at `%LOCALAPPDATA%\GitHubCLI\bin\gh.exe` so a
+  Git credential helper configured by `gh` will not point to a deleted file.
+  GitHub login remains in GitHub CLI's normal credential store.
 - Unity **6 (6000.x)** already installed. An existing standalone **Unity CLI**
   (`unity`) is reused; if missing, setup downloads and runs
   [Unity's official Windows installer](https://unity.com/install.ps1) without
@@ -41,9 +43,15 @@ For a custom CLI installation or license location:
 .\Setup-UnityCI.ps1 -UnityCli 'C:\tools\unity.exe' -LicensePath 'C:\path\Unity_lic.ulf'
 ```
 
+Use `-Repository owner/repo` to select the target explicitly. Otherwise, setup
+resolves the current branch's push remote, the configured default push remote, or
+`origin` (in that order), then targets that remote's GitHub repository.
+
 1. Complete `gh auth login` in your browser. The script requests repository and
-   workflow permissions. Remove `GH_TOKEN`/`GITHUB_TOKEN` from the shell if they
-   prevent interactive login.
+   workflow permissions without forcing a Git credential helper change. If a helper
+   is already configured, its persistent global configuration is isolated during
+   login. Remove `GH_TOKEN`/`GITHUB_TOKEN` from the shell if they prevent interactive
+   login.
 2. Verify the displayed repository and default branch and read Unity's linked
    license terms, then type `YES` to consent to Personal activation and repository
    changes. Setup warns before replacing an existing `unity-build.yml`.
@@ -133,7 +141,8 @@ pending run. Avoid concurrent builds using that account in other repositories.
 - Push/merge the profiles and workflow **before** creating and pushing a tag.
   Tags build their tagged commit, not the current default branch.
 - Successful jobs upload `Unity-Web`, `Unity-Windows` and/or `Unity-macOS` to the
-  workflow run's **Artifacts** section. The Web artifact is a build download,
+  workflow run's **Artifacts** section. The macOS artifact is a `.tar.gz`; extract
+  it with `tar` to preserve the app's executable permissions. The Web artifact is a build download,
   not an automatic GitHub Pages deployment; serve it with a suitable web server.
 
 No local Unity build or license activation is possible in this repository itself:
