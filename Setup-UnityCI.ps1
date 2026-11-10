@@ -164,6 +164,7 @@ try {
 
     Write-Host "Target: https://github.com/$repository (branch: $branch)"
     Write-Host "This will set UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD and commit $workflowPath."
+    Write-Host 'It will also set the Actions variable UNITY_BUILD_WEB to TRUE (Web builds enabled on tags).'
     Write-Host 'It will also activate Unity Personal and accept its license terms: https://unity.com/legal/terms-of-service/software'
     if ($existingWorkflow) { Write-Warning 'The existing unity-build.yml workflow will be replaced.' }
     if ((Read-Host 'Continue? Type YES to confirm') -cne 'YES') { throw 'Setup cancelled; no repository changes were made.' }
@@ -209,6 +210,9 @@ try {
     & $gh secret set UNITY_PASSWORD --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_PASSWORD.'
 
+    & $gh variable set UNITY_BUILD_WEB --repo $repository --body TRUE
+    Assert-NativeSuccess 'Could not set UNITY_BUILD_WEB. Repository admin access is required.'
+
     $payload = @{
         message = 'Configure Unity GameCI builds'
         branch = $branch
@@ -218,7 +222,7 @@ try {
     $payload | ConvertTo-Json -Compress | & $gh api "repos/$repository/contents/$workflowPath" --method PUT --input - --silent
     Assert-NativeSuccess 'Could not commit the workflow. Check workflow write permission, branch protection, or concurrent changes. Secrets already set are retained; rerunning is safe.'
     Write-Host "Workflow committed to $branch. Pull that commit locally before pushing your Build Profiles and a tag."
-    Write-Host 'Required: Assets/BuildProfiles/CI-Web.asset (Web). Optional: CI-Windows.asset (Windows), CI-macOS.asset (macOS). See the README for settings and desktop build switches.'
+    Write-Host 'Enabled by default: Assets/BuildProfiles/CI-Web.asset (Web). Optional: CI-Windows.asset (Windows), CI-macOS.asset (macOS). See the README for settings and build switches.'
 } finally {
     $OutputEncoding = $oldOutputEncoding
     $license = $null

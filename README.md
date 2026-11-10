@@ -25,7 +25,7 @@ workflow from this public repository's `assets/` directory itself.
   The Unity project must be the Git repository
   root, with an initial commit already pushed to GitHub.
 - A **free Unity Personal** account eligible under Unity's terms, and repository
-  admin access to set Actions secrets. GitHub Actions must be enabled and permitted
+  admin access to set Actions secrets and variables. GitHub Actions must be enabled and permitted
   to run the actions in the template. The selected Unity version must have GameCI
   Docker images for your target platforms.
 
@@ -66,7 +66,8 @@ resolves the current branch's push remote, the configured default push remote, o
    not environment secrets. No credentials are passed in command-line arguments,
    written into the project, or printed by the script. Do not run with a transcript
    or debug tracing enabled.
-5. The script commits `.github/workflows/unity-build.yml` **directly to the remote
+5. The script sets the repository Actions variable `UNITY_BUILD_WEB` to `TRUE`
+   (including on reruns), then commits `.github/workflows/unity-build.yml` **directly to the remote
    default branch** using `gh api`. Pull that commit locally before pushing your
    profiles/tags. Setup never commits your local project changes. Protected branches
    or organization policies may reject this API write; in that case, add the
@@ -105,7 +106,7 @@ and save it with the following **exact, case-sensitive asset path and name**:
 
 | Build | Profile asset | Unity platform / GameCI target |
 | --- | --- | --- |
-| Web (always built) | `Assets/BuildProfiles/CI-Web.asset` | Web / `WebGL` |
+| Web (enabled by default) | `Assets/BuildProfiles/CI-Web.asset` | Web / `WebGL` |
 | Windows (optional) | `Assets/BuildProfiles/CI-Windows.asset` | Windows x86_64 / `StandaloneWindows64` |
 | macOS (optional) | `Assets/BuildProfiles/CI-macOS.asset` | macOS / `StandaloneOSX` |
 
@@ -132,12 +133,15 @@ pending run. Avoid concurrent builds using that account in other repositories.
 
 ## Triggers and downloads
 
-- **Any pushed tag** runs the Web build. To also build desktop targets on tags,
-  create repository **Actions variables** `UNITY_BUILD_WINDOWS` and/or
-  `UNITY_BUILD_MACOS` with the exact value `true`.
-- **Actions > Unity builds > Run workflow** always builds Web and offers separate
-  Windows/macOS checkboxes (off by default, independent of the tag variables).
+- **Any pushed tag** builds the targets enabled by repository **Actions variables**
+  `UNITY_BUILD_WEB`, `UNITY_BUILD_WINDOWS` and `UNITY_BUILD_MACOS`. Set a variable
+  to `TRUE` to enable that target or `FALSE` to disable it (case-insensitive).
+  Setup initializes `UNITY_BUILD_WEB` to `TRUE`; Windows and macOS are off unless
+  their variables are enabled. Missing variables disable their targets.
+- **Actions > Unity builds > Run workflow** offers separate Web, Windows and macOS
+  checkboxes (Web on by default, Windows/macOS off, independent of the tag variables).
   GitHub only shows this button once the workflow is on the default branch.
+- If no targets are selected or enabled, the build job is skipped.
 - Push/merge the profiles and workflow **before** creating and pushing a tag.
   Tags build their tagged commit, not the current default branch.
 - Successful jobs upload `Unity-Web`, `Unity-Windows` and/or `Unity-macOS` to the
