@@ -10,11 +10,15 @@ workflow from this public repository's `assets/` directory itself.
   privileges are needed. An existing `gh` is used, otherwise the official Windows
   portable ZIP is downloaded, SHA-256 checked against its release manifest, and
   removed after setup. GitHub login remains in GitHub CLI's normal credential store.
-- Unity **6 (6000.x)** and the current standalone **Unity CLI** (`unity`) already
-  installed in your user account. Follow
-  [Unity's CLI installation instructions](https://github.com/Unity-Technologies/skills/blob/main/skills/unity-cli/SKILL.md#install-the-cli-if-not-already-installed),
-  review the installer, then reopen PowerShell so `unity` is on PATH. The CLI is
-  distinct from the Unity Editor executable; do not pass `Unity.exe` as the CLI.
+- Unity **6 (6000.x)** already installed. An existing standalone **Unity CLI**
+  (`unity`) is reused; if missing, setup downloads and runs
+  [Unity's official Windows installer](https://unity.com/install.ps1) without
+  elevation, installing to `%LOCALAPPDATA%\Unity\bin`. The installer verifies the
+  binary's SHA-256 checksum and updates only the current user's PATH. Setup uses
+  the installed executable immediately; no terminal restart is required. Optional
+  agent/skill setup is disabled. Unity CLI remains installed after setup.
+  The CLI is distinct from the Unity Editor executable; do not pass the Editor
+  as the CLI.
   The Editor version is read from `ProjectSettings/ProjectVersion.txt`.
   The Unity project must be the Git repository
   root, with an initial commit already pushed to GitHub.

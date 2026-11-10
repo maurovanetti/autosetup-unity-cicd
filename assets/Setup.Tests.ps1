@@ -49,6 +49,7 @@ Describe 'Standalone Unity CI setup' {
         Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestUnity' } } -ParameterFilter { $Name -eq 'unity' }
         Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'Invoke-TestUnity' }
         Mock Read-Host { 'YES' }
+        Mock Start-Process { throw 'Unexpected installer invocation.' }
         Mock Invoke-WebRequest {
             $global:UnityCiTest.DownloadDirectory = Split-Path $OutFile -Parent
             Set-Content -LiteralPath $OutFile 'name: test workflow'
@@ -80,6 +81,7 @@ Describe 'Standalone Unity CI setup' {
         [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload.content)) | Should -Match 'name: test workflow'
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
         Test-Path "$script:project/.github" | Should -BeFalse
+        Should -Invoke Start-Process -Times 0 -Exactly
     }
 
     It 'requires explicit consent before changing secrets or activating Unity' {
@@ -178,5 +180,79 @@ Describe 'Standalone Unity CI setup' {
         Should -Invoke Expand-Archive -Times 1 -Exactly
         @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' }).Count | Should -Be 3
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+    }
+
+    It 'does not install over an invalid explicit CLI path' {
+        { & $script:setup -UnityCli (Join-Path $TestDrive 'missing.exe') } | Should -Throw '*supply a valid standalone CLI path*'
+        Should -Invoke Start-Process -Times 0 -Exactly
+    }
+
+    Context 'when Unity CLI is missing' {
+        BeforeEach {
+            $script:oldLocalAppData = $env:LOCALAPPDATA
+            $script:oldUnityHome = $env:UNITY_CLI_HOME
+            $script:oldSkipSetup = $env:UNITY_CLI_SKIP_SETUP
+            $env:LOCALAPPDATA = Join-Path $TestDrive 'User Local App Data'
+            $env:UNITY_CLI_HOME = 'original-home'
+            $env:UNITY_CLI_SKIP_SETUP = 'original-setup'
+            Mock Get-Command { $null } -ParameterFilter { $Name -eq 'unity' }
+            Mock Get-Command { throw 'Reached GitHub setup after installation.' } -ParameterFilter { $Name -eq 'gh' }
+            Mock Start-Process {
+                $global:UnityCiTest.InstallHome = $env:UNITY_CLI_HOME
+                $global:UnityCiTest.SkipSetup = $env:UNITY_CLI_SKIP_SETUP
+                $bin = Join-Path $env:UNITY_CLI_HOME 'bin'
+                New-Item -ItemType Directory -Path $bin -Force | Out-Null
+                Set-Content -LiteralPath (Join-Path $bin 'unity.exe') 'mock executable'
+                [pscustomobject]@{ ExitCode = 0 }
+            }
+        }
+        AfterEach {
+            $env:LOCALAPPDATA = $script:oldLocalAppData
+            $env:UNITY_CLI_HOME = $script:oldUnityHome
+            $env:UNITY_CLI_SKIP_SETUP = $script:oldSkipSetup
+        }
+
+        It 'installs per-user without elevation and continues in the same session' {
+            { & $script:setup } | Should -Throw '*Reached GitHub setup after installation*'
+            $global:UnityCiTest.InstallHome | Should -Be (Join-Path $env:LOCALAPPDATA 'Unity')
+            $global:UnityCiTest.SkipSetup | Should -Be '1'
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'https://unity.com/install.ps1' -and $UseBasicParsing }
+            Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq (Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })) -and
+                $Wait -and $PassThru -and $NoNewWindow -and
+                -not $Verb -and
+                $ArgumentList -like '*-NoProfile -ExecutionPolicy Bypass -File "*install-unity.ps1"'
+            }
+            $env:UNITY_CLI_HOME | Should -Be 'original-home'
+            $env:UNITY_CLI_SKIP_SETUP | Should -Be 'original-setup'
+            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+        }
+
+        It 'stops and restores the environment when installation fails' {
+            Mock Start-Process { [pscustomobject]@{ ExitCode = 1 } }
+            { & $script:setup } | Should -Throw '*Unity CLI installation failed*'
+            $env:UNITY_CLI_HOME | Should -Be 'original-home'
+            $env:UNITY_CLI_SKIP_SETUP | Should -Be 'original-setup'
+            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+            $script:calls.Count | Should -Be 0
+        }
+
+        It 'rejects a successful installer that did not create the executable' {
+            Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+            Mock Start-Process { [pscustomobject]@{ ExitCode = 0 } }
+            { & $script:setup } | Should -Throw '*Unity CLI executable was not found*'
+            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+            $script:calls.Count | Should -Be 0
+        }
+
+        It 'cleans up and stops if the installer download fails' {
+            Mock Invoke-WebRequest {
+                $global:UnityCiTest.DownloadDirectory = Split-Path $OutFile -Parent
+                throw 'Installer download failed.'
+            }
+            { & $script:setup } | Should -Throw '*Installer download failed*'
+            Should -Invoke Start-Process -Times 0 -Exactly
+            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
+        }
     }
 }

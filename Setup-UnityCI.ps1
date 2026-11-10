@@ -33,17 +33,38 @@ try {
     if ($versionText -notmatch '(?m)^m_EditorVersion: (6000\.\d+\.\d+[abfp]\d+)\s*$') {
         throw 'Unity 6 (6000.x) is required because the workflow uses Build Profiles.'
     }
-    if (-not $UnityCli) {
-        $unityCommand = Get-Command unity -CommandType Application -ErrorAction SilentlyContinue
-        if ($unityCommand) { $UnityCli = $unityCommand.Source }
-    }
-    if (-not $UnityCli -or -not (Test-Path -LiteralPath $UnityCli -PathType Leaf)) {
-        throw 'Install the standalone Unity CLI from https://unity.com/products/unity-cli in your user account, reopen PowerShell, and rerun. This is the unity command, not the Unity Editor executable. A custom location can be passed with -UnityCli.'
-    }
-
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ("unity-ci-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempDirectory | Out-Null
+    if (-not $UnityCli) {
+        $unityCommand = Get-Command unity -CommandType Application -ErrorAction SilentlyContinue
+        if ($unityCommand) {
+            $UnityCli = $unityCommand.Source
+        } else {
+            Write-Host 'Installing Unity CLI for the current user (no elevation).'
+            $installer = Join-Path $tempDirectory 'install-unity.ps1'
+            Invoke-WebRequest 'https://unity.com/install.ps1' -OutFile $installer -UseBasicParsing
+            $oldUnityHome = $env:UNITY_CLI_HOME
+            $oldSkipSetup = $env:UNITY_CLI_SKIP_SETUP
+            try {
+                $env:UNITY_CLI_HOME = Join-Path $env:LOCALAPPDATA 'Unity'
+                $env:UNITY_CLI_SKIP_SETUP = '1'
+                $shellName = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+                $process = Start-Process -FilePath (Join-Path $PSHOME $shellName) -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$installer`"" -Wait -PassThru -NoNewWindow
+                if ($process.ExitCode -ne 0) {
+                    throw 'Unity CLI installation failed. Check the installer output, network access and write access to LOCALAPPDATA, then rerun setup.'
+                }
+                $UnityCli = Join-Path $env:UNITY_CLI_HOME 'bin\unity.exe'
+            } finally {
+                $env:UNITY_CLI_HOME = $oldUnityHome
+                $env:UNITY_CLI_SKIP_SETUP = $oldSkipSetup
+            }
+        }
+    }
+    if (-not $UnityCli -or -not (Test-Path -LiteralPath $UnityCli -PathType Leaf)) {
+        throw 'Unity CLI executable was not found. Check the installation output or supply a valid standalone CLI path with -UnityCli (not the Unity Editor executable).'
+    }
+
     $ghCommand = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue
     if ($ghCommand) {
         $gh = $ghCommand.Source
