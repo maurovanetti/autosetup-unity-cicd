@@ -315,4 +315,8 @@ Describe 'Build workflow runtime compatibility' {
             $actionReference.Groups[1].Value | Should -Match '@v\d+\.\d+\.\d+$'
         }
     }
+
+    It 'uploads WebGL files with index.html at the artifact root' {
+        $script:workflow | Should -Match "matrix\.platform == 'WebGL' && 'build/WebGL/\*\*'"
+    }
 }
