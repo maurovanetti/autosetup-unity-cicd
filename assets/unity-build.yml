@@ -63,7 +63,7 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@d23441ae5dbe999dd3844ab08716d82b31f383a2 # v6.1.0
+      - uses: actions/checkout@v6.1.0
         with:
           lfs: true
           persist-credentials: false
