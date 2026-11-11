@@ -63,7 +63,7 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@d23441ae5dbe999dd3844ab08716d82b31f383a2 # v6.1.0
+      - uses: actions/checkout@v6.1.0
         with:
           lfs: true
           persist-credentials: false
@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
       - name: Build using the named profile
-        uses: game-ci/unity-builder@4423ee75828dff56037d1d1cfdac6b68e3a6ba00 # v4.8.2
+        uses: game-ci/unity-builder@v4.8.2
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -104,7 +104,7 @@ jobs:
         if: matrix.platform == 'StandaloneOSX'
         run: tar -czf build/Unity-macOS.tar.gz -C build/StandaloneOSX .
       - name: Upload build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: Unity-${{ matrix.name }}
           path: ${{ matrix.platform == 'StandaloneOSX' && 'build/Unity-macOS.tar.gz' || format('build/{0}', matrix.platform) }}
