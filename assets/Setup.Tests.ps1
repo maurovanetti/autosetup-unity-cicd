@@ -309,10 +309,15 @@ Describe 'Build workflow runtime compatibility' {
 
     It 'uses tagged releases for all workflow actions' {
         $script:workflow | Should -Match '(?m)^\s+- uses: actions/checkout@v6\.1\.0$'
+        $script:workflow | Should -Match '(?m)^\s+- uses: actions/cache@v4\.2\.4$'
         $actionReferences = [regex]::Matches($script:workflow, '(?m)^\s+(?:-\s+)?uses: ([^\s]+)$')
-        $actionReferences.Count | Should -Be 3
+        $actionReferences.Count | Should -Be 4
         foreach ($actionReference in $actionReferences) {
             $actionReference.Groups[1].Value | Should -Match '@v\d+\.\d+\.\d+$'
         }
+    }
+
+    It 'caches the Library folder using the Unity version and package lockfile' {
+        $script:workflow | Should -Match "(?ms)^\s+- uses: actions/cache@v4\.2\.4\s+with:\s+path: Library\s+key: Library-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('ProjectSettings/ProjectVersion\.txt'\) \}\}-\$\{\{ hashFiles\('Packages/packages-lock\.json'\) \}\}"
     }
 }

@@ -67,6 +67,10 @@ jobs:
         with:
           lfs: true
           persist-credentials: false
+      - uses: actions/cache@v4.2.4
+        with:
+          path: Library
+          key: Library-${{ runner.os }}-${{ hashFiles('ProjectSettings/ProjectVersion.txt') }}-${{ hashFiles('Packages/packages-lock.json') }}
       - name: Check Unity version, profile and secrets
         shell: bash
         env:
