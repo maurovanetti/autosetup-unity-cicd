@@ -107,5 +107,5 @@ jobs:
         uses: actions/upload-artifact@v4.6.2
         with:
           name: Unity-${{ matrix.name }}
-          path: ${{ matrix.platform == 'StandaloneOSX' && 'build/Unity-macOS.tar.gz' || format('build/{0}', matrix.platform) }}
+          path: ${{ matrix.platform == 'StandaloneOSX' && 'build/Unity-macOS.tar.gz' || matrix.platform == 'WebGL' && 'build/WebGL/**' || format('build/{0}', matrix.platform) }}
           if-no-files-found: error
