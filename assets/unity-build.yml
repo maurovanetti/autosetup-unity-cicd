@@ -80,8 +80,8 @@ jobs:
             echo "::error::Unity 6 (6000.x) is required for Build Profiles."
             exit 1
           fi
-          if [[ ! -f "Assets/BuildProfiles/$PROFILE.asset" ]]; then
-            echo "::error::Missing Assets/BuildProfiles/$PROFILE.asset. In Unity 6 File > Build Profiles, create and save this exact case-sensitive profile for $PLATFORM, configure enabled scenes, and commit its .asset and .meta files. Names: CI-Web (Web), CI-Windows (Windows), CI-macOS (macOS). Desktop profiles must use Mono for Linux cross-compilation. See the autosetup-unity-cicd README."
+          if [[ ! -f "Assets/Settings/Build Profiles/$PROFILE.asset" ]]; then
+            echo "::error::Missing Assets/Settings/Build Profiles/$PROFILE.asset. In Unity 6 File > Build Profiles, create and save this exact case-sensitive profile for $PLATFORM, configure enabled scenes, and commit its .asset and .meta files. Names: CI-Web (Web), CI-Windows (Windows), CI-macOS (macOS). Desktop profiles must use Mono for Linux cross-compilation. See the autosetup-unity-cicd README."
             exit 1
           fi
           if [[ -z "$UNITY_LICENSE" || -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ]]; then
@@ -96,7 +96,7 @@ jobs:
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           targetPlatform: ${{ matrix.platform }}
-          buildProfile: Assets/BuildProfiles/${{ matrix.profile }}.asset
+          buildProfile: Assets/Settings/Build Profiles/${{ matrix.profile }}.asset
           buildName: ${{ matrix.name }}
           buildsPath: build
           versioning: None
