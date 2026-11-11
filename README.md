@@ -51,10 +51,11 @@ resolves the current branch's push remote, the configured default push remote, o
 2. Verify the displayed repository and default branch, then type `YES` to consent
    to repository changes. Setup warns before replacing an existing `unity-build.yml`.
 3. Keep PowerShell open and follow the displayed Unity Hub license-preparation
-   instructions, detailed below. At the file-path prompt, press **Enter** to use
-   `C:\ProgramData\Unity\Unity_lic.ulf` (or your `-LicensePath`), paste another
-   file path, or type **CANCEL** to stop. Paths containing spaces are supported,
-   with or without surrounding double quotes.
+   steps 1–4, detailed below. Press **Enter** when done. If the `.ulf` is already
+   at `C:\ProgramData\Unity\Unity_lic.ulf` (or your `-LicensePath`), setup uses it
+   automatically. Otherwise, follow steps 5–6 and press **Enter** to use that path,
+   paste another file path, or type **CANCEL** to stop. Paths containing spaces
+   are supported, with or without surrounding double quotes.
 4. The supplied file is validated, then uploaded using
    `gh secret set UNITY_LICENSE` through standard input. Enter the **same Unity
    account's** email and password at the hidden `gh secret set UNITY_EMAIL` and
@@ -77,17 +78,19 @@ instead of `main`. Review the downloaded script/template before granting access.
 ### Preparing the Personal license file
 
 Follow [GameCI's Personal activation instructions](https://game.ci/docs/github/activation).
-The script displays these steps and waits while you carry them out:
+The script displays steps 1–4 and waits while you carry them out:
 
 1. Open **Unity Hub** and sign in with the Personal account you will use for CI.
 2. Open **Preferences > Licenses**, or your profile menu > **Manage licenses**.
 3. Click **Add > Get a free personal license**, **even if a Personal license already
-   appears active**. Read and accept the terms in Hub yourself if you agree.
-   The script does not accept Unity's license terms on your behalf.
-4. Open File Explorer and paste `C:\ProgramData\Unity` into its address bar.
-   `ProgramData` is hidden by default. Look for **`Unity_lic.ulf`**.
-5. Return to PowerShell and supply the file path at the prompt. If you already
-   have a legacy Personal `.ulf` for the same account, you may use it instead.
+   appears active**.
+4. Read the terms in Hub and accept them yourself if you agree. The script does
+   not accept Unity's license terms on your behalf.
+5. If the file is not already at the expected path, open File Explorer and paste
+   `C:\ProgramData\Unity` into its address bar. Look for `Unity_lic.ulf`.
+6. Return to PowerShell and press **Enter** to use the expected path, supply
+   another file path, or type **CANCEL** to stop. If you already have a legacy
+   Personal `.ulf` for the same account, you may use it instead.
 
 **An active license is not enough:** successful sign-in or Personal activation
 can leave you with an Assigned/entitlement license but no legacy `.ulf`.

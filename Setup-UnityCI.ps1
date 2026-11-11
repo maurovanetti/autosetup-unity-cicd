@@ -146,17 +146,20 @@ try {
     Write-Host '3. Click Add > Get a free personal license, EVEN IF Personal already appears active.'
     Write-Host '4. Read the terms in Hub and accept them yourself if you agree. Setup does not accept them for you.'
     Write-Host '   Unity terms: https://unity.com/legal/terms-of-service/software'
-    Write-Host '5. In File Explorer, paste C:\ProgramData\Unity into the address bar (ProgramData is hidden).'
-    Write-Host '   Look for Unity_lic.ulf. An active/Assigned license alone does not guarantee this file exists.'
-    Write-Host '   If you already have a legacy Personal .ulf for this account, you may use it instead.'
-    Write-Host '   Do not rename UnityEntitlementLicense.xml or an .alf request: neither is a compatible .ulf.'
-    Write-Host '   If Hub has no Personal activation option or produces no .ulf, stop here; see https://game.ci/docs/github/activation.'
-    Write-Host '   Setup cannot generate or convert a license. Do not share its contents or commit it to Git.'
-    Write-Host "6. Return here. Press Enter to use '$LicensePath', paste another file path, or type CANCEL."
-    $licenseInput = Read-Host 'Personal .ulf file path (Enter = path above; CANCEL = stop)'
-    if ($licenseInput.Trim() -ieq 'CANCEL') { throw 'Setup cancelled; no repository changes were made.' }
-    if (-not [string]::IsNullOrWhiteSpace($licenseInput)) {
-        $LicensePath = $licenseInput.Trim().Trim('"')
+    Read-Host 'Press Enter after completing steps 1–4'
+    if (-not (Test-Path -LiteralPath $LicensePath -PathType Leaf)) {
+        Write-Host '5. In File Explorer, paste C:\ProgramData\Unity into the address bar (ProgramData is hidden).'
+        Write-Host '   Look for Unity_lic.ulf. An active/Assigned license alone does not guarantee this file exists.'
+        Write-Host '   If you already have a legacy Personal .ulf for this account, you may use it instead.'
+        Write-Host '   Do not rename UnityEntitlementLicense.xml or an .alf request: neither is a compatible .ulf.'
+        Write-Host '   If Hub has no Personal activation option or produces no .ulf, stop here; see https://game.ci/docs/github/activation.'
+        Write-Host '   Setup cannot generate or convert a license. Do not share its contents or commit it to Git.'
+        Write-Host "6. Return here. Press Enter to use '$LicensePath', paste another file path, or type CANCEL."
+        $licenseInput = Read-Host 'Personal .ulf file path (Enter = path above; CANCEL = stop)'
+        if ($licenseInput.Trim() -ieq 'CANCEL') { throw 'Setup cancelled; no repository changes were made.' }
+        if (-not [string]::IsNullOrWhiteSpace($licenseInput)) {
+            $LicensePath = $licenseInput.Trim().Trim('"')
+        }
     }
     if (-not (Test-Path -LiteralPath $LicensePath -PathType Leaf)) {
         throw "No Personal .ulf file was found at '$LicensePath'. Follow the Unity Hub steps above, then rerun setup with -LicensePath pointing to the existing file. If Hub only provides entitlement XML, this workflow cannot use it. No repository changes were made."
