@@ -146,7 +146,7 @@ try {
     Write-Host '3. Click Add > Get a free personal license, EVEN IF Personal already appears active.'
     Write-Host '4. Read the terms in Hub and accept them yourself if you agree. Setup does not accept them for you.'
     Write-Host '   Unity terms: https://unity.com/legal/terms-of-service/software'
-    Read-Host 'Press Enter after completing steps 1–4'
+    Read-Host 'Press Enter after completing steps 1 to 4'
     if (-not (Test-Path -LiteralPath $LicensePath -PathType Leaf)) {
         Write-Host '5. In File Explorer, paste C:\ProgramData\Unity into the address bar (ProgramData is hidden).'
         Write-Host '   Look for Unity_lic.ulf. An active/Assigned license alone does not guarantee this file exists.'
@@ -189,9 +189,11 @@ try {
     $license | & $gh secret set UNITY_LICENSE --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_LICENSE. Repository admin access is required.'
     $license = $null
-    Write-Host 'Enter the email and password for the SAME Unity account that owns the supplied license. GitHub CLI hides the secret input.'
+    Write-Host 'Enter the credentials for the SAME Unity account that owns the supplied license. GitHub CLI hides the secret input.'
+    Write-Host 'Enter your email first.'
     & $gh secret set UNITY_EMAIL --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_EMAIL.'
+    Write-Host 'Now enter your password.'
     & $gh secret set UNITY_PASSWORD --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_PASSWORD.'
 
