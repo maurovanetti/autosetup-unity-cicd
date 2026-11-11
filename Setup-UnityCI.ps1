@@ -1,7 +1,6 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string] $UnityCli,
     [string] $LicensePath = "$env:ProgramData\Unity\Unity_lic.ulf",
     [string] $AssetRef = 'main',
     [string] $Repository
@@ -37,35 +36,6 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ("unity-ci-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempDirectory | Out-Null
-    if (-not $UnityCli) {
-        $unityCommand = Get-Command unity -CommandType Application -ErrorAction SilentlyContinue
-        if ($unityCommand) {
-            $UnityCli = $unityCommand.Source
-        } else {
-            Write-Host 'Installing Unity CLI for the current user (no elevation).'
-            $installer = Join-Path $tempDirectory 'install-unity.ps1'
-            Invoke-WebRequest 'https://unity.com/install.ps1' -OutFile $installer -UseBasicParsing
-            $oldUnityHome = $env:UNITY_CLI_HOME
-            $oldSkipSetup = $env:UNITY_CLI_SKIP_SETUP
-            try {
-                $env:UNITY_CLI_HOME = Join-Path $env:LOCALAPPDATA 'Unity'
-                $env:UNITY_CLI_SKIP_SETUP = '1'
-                $shellName = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
-                $process = Start-Process -FilePath (Join-Path $PSHOME $shellName) -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$installer`"" -Wait -PassThru -NoNewWindow
-                if ($process.ExitCode -ne 0) {
-                    throw 'Unity CLI installation failed. Check the installer output, network access and write access to LOCALAPPDATA, then rerun setup.'
-                }
-                $UnityCli = Join-Path $env:UNITY_CLI_HOME 'bin\unity.exe'
-            } finally {
-                $env:UNITY_CLI_HOME = $oldUnityHome
-                $env:UNITY_CLI_SKIP_SETUP = $oldSkipSetup
-            }
-        }
-    }
-    if (-not $UnityCli -or -not (Test-Path -LiteralPath $UnityCli -PathType Leaf)) {
-        throw 'Unity CLI executable was not found. Check the installation output or supply a valid standalone CLI path with -UnityCli (not the Unity Editor executable).'
-    }
-
     $ghCommand = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue
     if ($ghCommand) {
         $gh = $ghCommand.Source
@@ -165,19 +135,31 @@ try {
     Write-Host "Target: https://github.com/$repository (branch: $branch)"
     Write-Host "This will set UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD and commit $workflowPath."
     Write-Host 'It will also set the Actions variable UNITY_BUILD_WEB to TRUE (Web builds enabled on tags).'
-    Write-Host 'It will also activate Unity Personal and accept its license terms: https://unity.com/legal/terms-of-service/software'
+    Write-Host 'You will provide a legacy Personal .ulf license file. Setup does not install Unity CLI or activate Unity.'
     if ($existingWorkflow) { Write-Warning 'The existing unity-build.yml workflow will be replaced.' }
     if ((Read-Host 'Continue? Type YES to confirm') -cne 'YES') { throw 'Setup cancelled; no repository changes were made.' }
 
-    Write-Host 'Sign in interactively with the Unity Personal account you will use for CI.'
-    & $UnityCli auth login
-    Assert-NativeSuccess 'Unity CLI login failed. Complete browser login using a Personal account, not a service account.'
-    & $UnityCli license activate --personal --accept-eula
-    Assert-NativeSuccess 'Unity Personal activation failed. Check your eligibility, CLI version, and licensing-client installation.'
-    & $UnityCli license status
-    Assert-NativeSuccess 'Unity CLI did not report an active license.'
+    Write-Host ''
+    Write-Host 'Prepare your Personal license file (keep this PowerShell window open):'
+    Write-Host '1. Open Unity Hub and sign in with the Personal account you will use for CI.'
+    Write-Host '2. Open Preferences > Licenses (or your profile menu > Manage licenses).'
+    Write-Host '3. Click Add > Get a free personal license, EVEN IF Personal already appears active.'
+    Write-Host '4. Read the terms in Hub and accept them yourself if you agree. Setup does not accept them for you.'
+    Write-Host '   Unity terms: https://unity.com/legal/terms-of-service/software'
+    Write-Host '5. In File Explorer, paste C:\ProgramData\Unity into the address bar (ProgramData is hidden).'
+    Write-Host '   Look for Unity_lic.ulf. An active/Assigned license alone does not guarantee this file exists.'
+    Write-Host '   If you already have a legacy Personal .ulf for this account, you may use it instead.'
+    Write-Host '   Do not rename UnityEntitlementLicense.xml or an .alf request: neither is a compatible .ulf.'
+    Write-Host '   If Hub has no Personal activation option or produces no .ulf, stop here; see https://game.ci/docs/github/activation.'
+    Write-Host '   Setup cannot generate or convert a license. Do not share its contents or commit it to Git.'
+    Write-Host "6. Return here. Press Enter to use '$LicensePath', paste another file path, or type CANCEL."
+    $licenseInput = Read-Host 'Personal .ulf file path (Enter = path above; CANCEL = stop)'
+    if ($licenseInput.Trim() -ieq 'CANCEL') { throw 'Setup cancelled; no repository changes were made.' }
+    if (-not [string]::IsNullOrWhiteSpace($licenseInput)) {
+        $LicensePath = $licenseInput.Trim().Trim('"')
+    }
     if (-not (Test-Path -LiteralPath $LicensePath -PathType Leaf)) {
-        throw "Activation did not produce a Personal .ulf at '$LicensePath'. GameCI needs a legacy Personal .ulf, not a token-based entitlement XML or .alf request. Try Unity Hub > Preferences > Licenses > Add > Get a free personal license, then rerun with -LicensePath if needed. If your account only supports token-based licensing, this hosted GameCI setup cannot proceed."
+        throw "No Personal .ulf file was found at '$LicensePath'. Follow the Unity Hub steps above, then rerun setup with -LicensePath pointing to the existing file. If Hub only provides entitlement XML, this workflow cannot use it. No repository changes were made."
     }
     $license = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $LicensePath).Path)
     if ([string]::IsNullOrWhiteSpace($license) -or [Text.Encoding]::UTF8.GetByteCount($license) -gt 48KB) {
@@ -204,7 +186,7 @@ try {
     $license | & $gh secret set UNITY_LICENSE --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_LICENSE. Repository admin access is required.'
     $license = $null
-    Write-Host 'Enter the email and password for the SAME Unity account used for activation. GitHub CLI hides the secret input.'
+    Write-Host 'Enter the email and password for the SAME Unity account that owns the supplied license. GitHub CLI hides the secret input.'
     & $gh secret set UNITY_EMAIL --repo $repository
     Assert-NativeSuccess 'Could not set UNITY_EMAIL.'
     & $gh secret set UNITY_PASSWORD --repo $repository

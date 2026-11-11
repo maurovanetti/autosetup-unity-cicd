@@ -1,7 +1,8 @@
 # autosetup-unity-cicd
 
-One PowerShell script sets up [GameCI](https://game.ci/) builds for an existing
-GitHub-hosted Unity project. Only download `Setup-UnityCI.ps1`; it fetches the
+One PowerShell script guides you through supplying a Unity Personal license and
+sets up [GameCI](https://game.ci/) builds for an existing GitHub-hosted Unity project.
+Only download `Setup-UnityCI.ps1`; it fetches the
 workflow from this public repository's `assets/` directory itself.
 
 ## Prerequisites
@@ -12,15 +13,10 @@ workflow from this public repository's `assets/` directory itself.
   The verified executable is kept at `%LOCALAPPDATA%\GitHubCLI\bin\gh.exe` so a
   Git credential helper configured by `gh` will not point to a deleted file.
   GitHub login remains in GitHub CLI's normal credential store.
-- Unity **6 (6000.x)** already installed. An existing standalone **Unity CLI**
-  (`unity`) is reused; if missing, setup downloads and runs
-  [Unity's official Windows installer](https://unity.com/install.ps1) without
-  elevation, installing to `%LOCALAPPDATA%\Unity\bin`. The installer verifies the
-  binary's SHA-256 checksum and updates only the current user's PATH. Setup uses
-  the installed executable immediately; no terminal restart is required. Optional
-  agent/skill setup is disabled. Unity CLI remains installed after setup.
-  The CLI is distinct from the Unity Editor executable; do not pass the Editor
-  as the CLI.
+- Unity **6 (6000.x)** already installed, plus either **Unity Hub** for manual
+  activation or an existing GameCI-compatible legacy Personal `.ulf` license file.
+  **Unity CLI is not required:** setup does not download, update or run it,
+  sign in to Unity, or activate a license automatically.
   The Editor version is read from `ProjectSettings/ProjectVersion.txt`.
   The Unity project must be the Git repository
   root, with an initial commit already pushed to GitHub.
@@ -37,10 +33,10 @@ Place the script in the **Unity project root**, open PowerShell there, and run:
 .\Setup-UnityCI.ps1
 ```
 
-For a custom CLI installation or license location:
+For an existing license in a custom location:
 
 ```powershell
-.\Setup-UnityCI.ps1 -UnityCli 'C:\tools\unity.exe' -LicensePath 'C:\path\Unity_lic.ulf'
+.\Setup-UnityCI.ps1 -LicensePath 'C:\path\Unity_lic.ulf'
 ```
 
 Use `-Repository owner/repo` to select the target explicitly. Otherwise, setup
@@ -52,14 +48,14 @@ resolves the current branch's push remote, the configured default push remote, o
    is already configured, its persistent global configuration is isolated during
    login. Remove `GH_TOKEN`/`GITHUB_TOKEN` from the shell if they prevent interactive
    login.
-2. Verify the displayed repository and default branch and read Unity's linked
-   license terms, then type `YES` to consent to Personal activation and repository
-   changes. Setup warns before replacing an existing `unity-build.yml`.
-3. Complete the interactive browser login started by `unity auth login`. The
-   script then runs `unity license activate --personal --accept-eula` and verifies
-   activation using `unity license status`. Use a human Personal account, not a
-   service account. CLI and Hub sign-in can be separate.
-4. The resulting `C:\ProgramData\Unity\Unity_lic.ulf` is uploaded using
+2. Verify the displayed repository and default branch, then type `YES` to consent
+   to repository changes. Setup warns before replacing an existing `unity-build.yml`.
+3. Keep PowerShell open and follow the displayed Unity Hub license-preparation
+   instructions, detailed below. At the file-path prompt, press **Enter** to use
+   `C:\ProgramData\Unity\Unity_lic.ulf` (or your `-LicensePath`), paste another
+   file path, or type **CANCEL** to stop. Paths containing spaces are supported,
+   with or without surrounding double quotes.
+4. The supplied file is validated, then uploaded using
    `gh secret set UNITY_LICENSE` through standard input. Enter the **same Unity
    account's** email and password at the hidden `gh secret set UNITY_EMAIL` and
    `gh secret set UNITY_PASSWORD` prompts. These are repository Actions secrets,
@@ -78,26 +74,40 @@ resolves the current branch's push remote, the configured default push remote, o
 `-AssetRef <tag-or-commit>` selects a trusted revision of this setup repository
 instead of `main`. Review the downloaded script/template before granting access.
 
-### Personal licensing limitation
+### Preparing the Personal license file
 
-The standalone CLI supports interactive browser sign-in and Personal activation;
-see [Unity's authentication/licensing reference](https://github.com/Unity-Technologies/skills/blob/main/skills/unity-cli/references/auth-license-cloud.md).
-There is **no supported headless Personal activation using just Editor
-`-username`/`-password` flags**. Local activation does not guarantee that a
-reusable legacy `.ulf` is produced. This setup uses
-[GameCI's Personal activation instructions](https://github.com/game-ci/documentation/blob/main/docs/03-github/02-activation.mdx):
-activate locally, then provide the legacy `.ulf` and account credentials to CI.
-An `.alf` is only an activation **request**, not a license.
+Follow [GameCI's Personal activation instructions](https://game.ci/docs/github/activation).
+The script displays these steps and waits while you carry them out:
 
-Some CLI/Hub/account combinations only expose newer token-based licensing and do
-not produce a GameCI-compatible `.ulf`. The script checks the license's legacy
-`DeveloperData` Personal serial and stops before uploading secrets if incompatible.
-Try **Unity Hub > Preferences > Licenses > Add > Get a free personal license** or
-supply an existing valid Personal `.ulf` with `-LicensePath` if available. The script
-cannot manufacture a license or bypass Unity licensing. If activation requires
-elevation on your machine, have the existing Unity installation configured by its
-administrator first; the script never elevates. Unity sign-in/2FA or licensing
-policy changes can still require manual intervention during CI.
+1. Open **Unity Hub** and sign in with the Personal account you will use for CI.
+2. Open **Preferences > Licenses**, or your profile menu > **Manage licenses**.
+3. Click **Add > Get a free personal license**, **even if a Personal license already
+   appears active**. Read and accept the terms in Hub yourself if you agree.
+   The script does not accept Unity's license terms on your behalf.
+4. Open File Explorer and paste `C:\ProgramData\Unity` into its address bar.
+   `ProgramData` is hidden by default. Look for **`Unity_lic.ulf`**.
+5. Return to PowerShell and supply the file path at the prompt. If you already
+   have a legacy Personal `.ulf` for the same account, you may use it instead.
+
+**An active license is not enough:** successful sign-in or Personal activation
+can leave you with an Assigned/entitlement license but no legacy `.ulf`.
+If Hub has no Personal activation option or does not generate the file, type
+`CANCEL` and consult the GameCI activation guidance. This setup cannot proceed
+without a compatible file; the Hub steps are not a guarantee of file generation.
+
+**Do not rename or upload `UnityEntitlementLicense.xml` or an `.alf` file.**
+An `.alf` is only an activation request, and entitlement XML is not a legacy
+Personal license. Setup checks the file's legacy `DeveloperData` Personal serial
+before uploading any secrets, setting variables or committing the workflow.
+A missing or incompatible file stops setup without those repository changes.
+Do not share license contents or commit the license file to Git.
+
+The script cannot manufacture or convert a license or bypass Unity licensing.
+If Hub activation needs administrator assistance, have your existing Unity
+installation configured by its administrator; setup never elevates.
+Unity sign-in/2FA or licensing policy changes can still require manual intervention
+during CI. The old `-UnityCli` and `-SkipUnityActivation` parameters have been removed;
+manual license preparation is now the only setup path.
 
 ## Required Build Profiles
 
@@ -155,7 +165,7 @@ it contains the bootstrap script and workflow template, not a Unity project.
 ## Validation
 
 With Pester 5 installed, run the focused mocked setup tests (no account access,
-downloads, license activation, or secret changes):
+downloads, Unity Hub interaction, license activation, or secret changes):
 
 ```powershell
 Invoke-Pester -Path ./assets/Setup.Tests.ps1 -Output Detailed

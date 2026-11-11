@@ -2,7 +2,7 @@ BeforeAll {
     $script:setup = Join-Path (Split-Path $PSScriptRoot -Parent) 'Setup-UnityCI.ps1'
     function Invoke-TestGh {
         $arguments = @($args)
-        $global:UnityCiTest.Calls.Add([pscustomobject]@{ Tool = 'gh'; Arguments = $arguments; Input = (@($input) -join "`n"); GitConfigGlobal = $env:GIT_CONFIG_GLOBAL })
+        $global:UnityCiTest.Calls.Add([pscustomobject]@{ Arguments = $arguments; Input = (@($input) -join "`n"); GitConfigGlobal = $env:GIT_CONFIG_GLOBAL })
         $global:LASTEXITCODE = 0
         switch ($arguments[0]) {
             'repo' { '{"nameWithOwner":"example/project","defaultBranchRef":{"name":"main"}}' }
@@ -18,13 +18,9 @@ BeforeAll {
             }
         }
     }
-    function Invoke-TestUnity {
-        $global:UnityCiTest.Calls.Add([pscustomobject]@{ Tool = 'unity'; Arguments = @($args) })
-        $global:LASTEXITCODE = if ($global:UnityCiTest.ActivationFails -and $args[0] -eq 'license') { 1 } else { 0 }
-    }
 }
 
-Describe 'Standalone Unity CI setup' {
+Describe 'Guided Unity CI setup' {
     BeforeEach {
         $script:oldOS = $env:OS
         $script:oldArchitecture = $env:PROCESSOR_ARCHITECTURE
@@ -46,13 +42,14 @@ Describe 'Standalone Unity CI setup' {
             RemoteFiles = @()
             UploadFails = $false
             VariableFails = $false
-            ActivationFails = $false
             DownloadDirectory = $null
             CredentialHelper = $null
             BranchPushRemote = $null
             DefaultPushRemote = $null
             PushUrl = 'git@github.com:example/project.git'
             InstalledGhPath = $null
+            LicensePath = $script:licensePath
+            LicenseText = $script:licenseText
         }
         Push-Location $script:project
         $script:oldGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
@@ -75,10 +72,11 @@ Describe 'Standalone Unity CI setup' {
             }
         }
         Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestGh' } } -ParameterFilter { $Name -eq 'gh' }
-        Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestUnity' } } -ParameterFilter { $Name -eq 'unity' }
-        Mock Test-Path { $true } -ParameterFilter { $LiteralPath -eq 'Invoke-TestUnity' }
-        Mock Read-Host { 'YES' }
-        Mock Start-Process { throw 'Unexpected installer invocation.' }
+        Mock Get-Command { throw 'Unity CLI must not be discovered.' } -ParameterFilter { $Name -eq 'unity' }
+        Mock Read-Host { 'YES' } -ParameterFilter { $Prompt -like 'Continue?*' }
+        Mock Read-Host { '' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        Mock Write-Host {}
+        Mock Start-Process { throw 'Setup must not launch installers or Unity.' }
         Mock Invoke-WebRequest {
             $global:UnityCiTest.DownloadDirectory = Split-Path $OutFile -Parent
             Set-Content -LiteralPath $OutFile 'name: test workflow'
@@ -94,36 +92,75 @@ Describe 'Standalone Unity CI setup' {
         Remove-Variable UnityCiTest -Scope Global
     }
 
-    It 'logs in, activates Personal, pipes the raw license and commits the workflow' {
+    It 'guides the user, pipes the validated license and commits without Unity CLI' {
         & $script:setup -LicensePath $script:licensePath
         $script:calls[0].Arguments -join ' ' | Should -Be 'auth login --hostname github.com --web --scopes repo,workflow'
-        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view --repo example/project --json nameWithOwner,defaultBranchRef'
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view example/project --json nameWithOwner,defaultBranchRef'
         @($global:UnityCiTest.GitCalls | Where-Object { $_.Arguments -join ' ' -eq 'remote get-url --push origin' }).Count | Should -Be 1
-        $unityCalls = @($script:calls | Where-Object Tool -eq unity)
-        $unityCalls.Count | Should -Be 3
-        $unityCalls[0].Arguments -join ' ' | Should -Be 'auth login'
-        $unityCalls[1].Arguments -join ' ' | Should -Be 'license activate --personal --accept-eula'
-        $secretCalls = @($script:calls | Where-Object { $_.Tool -eq 'gh' -and $_.Arguments[0] -eq 'secret' })
+        $secretCalls = @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })
         $secretCalls.Count | Should -Be 3
         $secretCalls[0].Input | Should -BeExactly $script:licenseText
         $secretCalls[0].Arguments -join ' ' | Should -Be 'secret set UNITY_LICENSE --repo example/project'
         $secretCalls[1].Arguments[2] | Should -Be 'UNITY_EMAIL'
         $secretCalls[2].Arguments[2] | Should -Be 'UNITY_PASSWORD'
-        $variableCalls = @($script:calls | Where-Object { $_.Tool -eq 'gh' -and $_.Arguments[0] -eq 'variable' })
-        $variableCalls.Count | Should -Be 1
-        $variableCalls[0].Arguments -join ' ' | Should -Be 'variable set UNITY_BUILD_WEB --repo example/project --body TRUE'
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'variable' }).Arguments -join ' ' | Should -Be 'variable set UNITY_BUILD_WEB --repo example/project --body TRUE'
         $payload = $script:calls[-1].Input | ConvertFrom-Json
         $payload.branch | Should -Be 'main'
         [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload.content)) | Should -Match 'name: test workflow'
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
         Test-Path "$script:project/.github" | Should -BeFalse
         Should -Invoke Start-Process -Times 0 -Exactly
+        Should -Invoke Get-Command -Times 0 -Exactly -ParameterFilter { $Name -eq 'unity' }
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like '*EVEN IF Personal already appears active*' }
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like '*Do not rename UnityEntitlementLicense.xml*' }
     }
 
-    It 'requires explicit consent before changing secrets or activating Unity' {
-        Mock Read-Host { 'no' }
+    It 'requires explicit consent before license preparation or repository writes' {
+        Mock Read-Host { 'no' } -ParameterFilter { $Prompt -like 'Continue?*' }
         { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*cancelled*'
-        @($script:calls | Where-Object { $_.Tool -eq 'unity' -or $_.Arguments[0] -in @('secret', 'variable') }).Count | Should -Be 0
+        Should -Invoke Read-Host -Times 0 -Exactly -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        @($script:calls | Where-Object { $_.Arguments[0] -in @('secret', 'variable') -or $_.Arguments -contains 'PUT' }).Count | Should -Be 0
+    }
+
+    It 'waits for Hub preparation before checking the license file' {
+        Remove-Item -LiteralPath $script:licensePath
+        Mock Read-Host {
+            Set-Content -LiteralPath $global:UnityCiTest.LicensePath $global:UnityCiTest.LicenseText -NoNewline
+            ''
+        } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        & $script:setup -LicensePath $script:licensePath
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })[0].Input | Should -BeExactly $script:licenseText
+    }
+
+    It 'uses the standard ProgramData license path when Enter is pressed without -LicensePath' {
+        $oldProgramData = $env:ProgramData
+        try {
+            $env:ProgramData = Join-Path $TestDrive 'ProgramData'
+            $directory = Join-Path $env:ProgramData 'Unity'
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            Copy-Item -LiteralPath $script:licensePath -Destination (Join-Path $directory 'Unity_lic.ulf')
+            & $script:setup
+            ($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })[0].Input | Should -BeExactly $script:licenseText
+        } finally {
+            $env:ProgramData = $oldProgramData
+        }
+    }
+
+    It 'accepts a quoted path with spaces entered at the prompt' {
+        $alternatePath = Join-Path $TestDrive 'License folder/Personal.ulf'
+        New-Item -ItemType Directory -Path (Split-Path $alternatePath) | Out-Null
+        Copy-Item -LiteralPath $script:licensePath -Destination $alternatePath
+        $global:UnityCiTest.LicensePath = $alternatePath
+        Mock Read-Host { '"' + $global:UnityCiTest.LicensePath + '"' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        & $script:setup -LicensePath (Join-Path $TestDrive 'missing.ulf')
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })[0].Input | Should -BeExactly $script:licenseText
+    }
+
+    It 'allows cancellation at the license prompt before repository writes' {
+        Mock Read-Host { ' cancel ' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*cancelled*'
+        @($script:calls | Where-Object { $_.Arguments[0] -in @('secret', 'variable') -or $_.Arguments -contains 'PUT' }).Count | Should -Be 0
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 
@@ -141,7 +178,7 @@ Describe 'Standalone Unity CI setup' {
 
     It 'accepts an explicit repository instead of inferring the push remote' {
         & $script:setup -LicensePath $script:licensePath -Repository 'my-fork/project'
-        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view --repo my-fork/project --json nameWithOwner,defaultBranchRef'
+        ($script:calls | Where-Object { $_.Arguments[0] -eq 'repo' }).Arguments -join ' ' | Should -Be 'repo view my-fork/project --json nameWithOwner,defaultBranchRef'
     }
 
     It 'protects an existing Git credential helper during interactive login' {
@@ -152,10 +189,10 @@ Describe 'Standalone Unity CI setup' {
         $env:GIT_CONFIG_GLOBAL | Should -Be 'original-gitconfig'
     }
 
-    It 'rejects a missing license without uploading secrets' {
+    It 'rejects a missing license without repository writes' {
         Remove-Item -LiteralPath $script:licensePath
-        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*Activation did not produce*'
-        @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' }).Count | Should -Be 0
+        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*No Personal .ulf file was found*No repository changes*'
+        @($script:calls | Where-Object { $_.Arguments[0] -in @('secret', 'variable') -or $_.Arguments -contains 'PUT' }).Count | Should -Be 0
     }
 
     It 'rejects entitlement XML and activation requests without uploading secrets' {
@@ -170,9 +207,10 @@ Describe 'Standalone Unity CI setup' {
         @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' }).Count | Should -Be 0
     }
 
-    It 'stops when Unity activation fails' {
-        $global:UnityCiTest.ActivationFails = $true
-        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*activation failed*'
+    It 'rejects a non-Personal serial without uploading secrets' {
+        $data = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes('TEST' + 'P' + ('0' * 26)))
+        Set-Content $script:licensePath "<root><License><DeveloperData Value=`"$data`"/></License></root>"
+        { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*valid legacy Personal serial*'
         @($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' }).Count | Should -Be 0
     }
 
@@ -186,7 +224,6 @@ Describe 'Standalone Unity CI setup' {
         $global:UnityCiTest.VariableFails = $true
         { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*Could not set UNITY_BUILD_WEB*'
         @($script:calls | Where-Object { $_.Arguments -contains 'PUT' }).Count | Should -Be 0
-        Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 
     It 'rejects pre-Unity-6 projects before authentication' {
@@ -250,79 +287,5 @@ Describe 'Standalone Unity CI setup' {
         $global:UnityCiTest.InstalledGhPath | Should -Be (Join-Path $env:LOCALAPPDATA 'GitHubCLI\bin\gh.exe')
         Test-Path -LiteralPath $global:UnityCiTest.InstalledGhPath | Should -BeTrue
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
-    }
-
-    It 'does not install over an invalid explicit CLI path' {
-        { & $script:setup -UnityCli (Join-Path $TestDrive 'missing.exe') } | Should -Throw '*supply a valid standalone CLI path*'
-        Should -Invoke Start-Process -Times 0 -Exactly
-    }
-
-    Context 'when Unity CLI is missing' {
-        BeforeEach {
-            $script:oldLocalAppData = $env:LOCALAPPDATA
-            $script:oldUnityHome = $env:UNITY_CLI_HOME
-            $script:oldSkipSetup = $env:UNITY_CLI_SKIP_SETUP
-            $env:LOCALAPPDATA = Join-Path $TestDrive 'User Local App Data'
-            $env:UNITY_CLI_HOME = 'original-home'
-            $env:UNITY_CLI_SKIP_SETUP = 'original-setup'
-            Mock Get-Command { $null } -ParameterFilter { $Name -eq 'unity' }
-            Mock Get-Command { throw 'Reached GitHub setup after installation.' } -ParameterFilter { $Name -eq 'gh' }
-            Mock Start-Process {
-                $global:UnityCiTest.InstallHome = $env:UNITY_CLI_HOME
-                $global:UnityCiTest.SkipSetup = $env:UNITY_CLI_SKIP_SETUP
-                $bin = Join-Path $env:UNITY_CLI_HOME 'bin'
-                New-Item -ItemType Directory -Path $bin -Force | Out-Null
-                Set-Content -LiteralPath (Join-Path $bin 'unity.exe') 'mock executable'
-                [pscustomobject]@{ ExitCode = 0 }
-            }
-        }
-        AfterEach {
-            $env:LOCALAPPDATA = $script:oldLocalAppData
-            $env:UNITY_CLI_HOME = $script:oldUnityHome
-            $env:UNITY_CLI_SKIP_SETUP = $script:oldSkipSetup
-        }
-
-        It 'installs per-user without elevation and continues in the same session' {
-            { & $script:setup } | Should -Throw '*Reached GitHub setup after installation*'
-            $global:UnityCiTest.InstallHome | Should -Be (Join-Path $env:LOCALAPPDATA 'Unity')
-            $global:UnityCiTest.SkipSetup | Should -Be '1'
-            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'https://unity.com/install.ps1' -and $UseBasicParsing }
-            Should -Invoke Start-Process -Times 1 -Exactly -ParameterFilter {
-                $FilePath -eq (Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })) -and
-                $Wait -and $PassThru -and $NoNewWindow -and
-                -not $Verb -and
-                $ArgumentList -like '*-NoProfile -ExecutionPolicy Bypass -File "*install-unity.ps1"'
-            }
-            $env:UNITY_CLI_HOME | Should -Be 'original-home'
-            $env:UNITY_CLI_SKIP_SETUP | Should -Be 'original-setup'
-            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
-        }
-
-        It 'stops and restores the environment when installation fails' {
-            Mock Start-Process { [pscustomobject]@{ ExitCode = 1 } }
-            { & $script:setup } | Should -Throw '*Unity CLI installation failed*'
-            $env:UNITY_CLI_HOME | Should -Be 'original-home'
-            $env:UNITY_CLI_SKIP_SETUP | Should -Be 'original-setup'
-            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
-            $script:calls.Count | Should -Be 0
-        }
-
-        It 'rejects a successful installer that did not create the executable' {
-            Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
-            Mock Start-Process { [pscustomobject]@{ ExitCode = 0 } }
-            { & $script:setup } | Should -Throw '*Unity CLI executable was not found*'
-            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
-            $script:calls.Count | Should -Be 0
-        }
-
-        It 'cleans up and stops if the installer download fails' {
-            Mock Invoke-WebRequest {
-                $global:UnityCiTest.DownloadDirectory = Split-Path $OutFile -Parent
-                throw 'Installer download failed.'
-            }
-            { & $script:setup } | Should -Throw '*Installer download failed*'
-            Should -Invoke Start-Process -Times 0 -Exactly
-            Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
-        }
     }
 }
