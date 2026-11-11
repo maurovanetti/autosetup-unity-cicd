@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   platforms:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       has_builds: ${{ steps.select.outputs.has_builds }}
@@ -57,13 +57,13 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: platforms
     if: needs.platforms.outputs.has_builds == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@d23441ae5dbe999dd3844ab08716d82b31f383a2 # v6.1.0
         with:
           lfs: true
           persist-credentials: false

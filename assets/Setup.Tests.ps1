@@ -289,3 +289,17 @@ Describe 'Guided Unity CI setup' {
         Test-Path -LiteralPath $global:UnityCiTest.DownloadDirectory | Should -BeFalse
     }
 }
+
+Describe 'Build workflow runtime compatibility' {
+    BeforeAll {
+        $script:workflow = Get-Content (Join-Path $PSScriptRoot 'unity-build.yml') -Raw
+    }
+
+    It 'pins both jobs to Ubuntu 24.04' {
+        ([regex]::Matches($script:workflow, '(?m)^\s+ runs-on: ubuntu-24\.04$')).Count | Should -Be 2
+    }
+
+    It 'uses the Node.js 24-compatible checkout release pinned by SHA' {
+        $script:workflow | Should -Match '(?m)^\s+- uses: actions/checkout@d23441ae5dbe999dd3844ab08716d82b31f383a2 # v6\.1\.0$'
+    }
+}
