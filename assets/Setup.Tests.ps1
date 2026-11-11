@@ -307,7 +307,11 @@ Describe 'Build workflow runtime compatibility' {
         ([regex]::Matches($script:workflow, '(?m)^\s+ runs-on: ubuntu-24\.04$')).Count | Should -Be 2
     }
 
-    It 'uses the Node.js 24-compatible checkout release tag' {
-        $script:workflow | Should -Match '(?m)^\s+- uses: actions/checkout@v6\.1\.0$'
+    It 'uses tagged releases for all workflow actions' {
+        $actionReferences = [regex]::Matches($script:workflow, '(?m)^\s+(?:-\s+)?uses: ([^\s]+)$')
+        $actionReferences.Count | Should -Be 3
+        foreach ($actionReference in $actionReferences) {
+            $actionReference.Groups[1].Value | Should -Match '@v\d+\.\d+\.\d+$'
+        }
     }
 }
