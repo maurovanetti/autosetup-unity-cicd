@@ -74,6 +74,7 @@ Describe 'Guided Unity CI setup' {
         Mock Get-Command { [pscustomobject]@{ Source = 'Invoke-TestGh' } } -ParameterFilter { $Name -eq 'gh' }
         Mock Get-Command { throw 'Unity CLI must not be discovered.' } -ParameterFilter { $Name -eq 'unity' }
         Mock Read-Host { 'YES' } -ParameterFilter { $Prompt -like 'Continue?*' }
+        Mock Read-Host { '' } -ParameterFilter { $Prompt -like 'Press Enter after completing steps 1–4*' }
         Mock Read-Host { '' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
         Mock Write-Host {}
         Mock Start-Process { throw 'Setup must not launch installers or Unity.' }
@@ -113,7 +114,10 @@ Describe 'Guided Unity CI setup' {
         Should -Invoke Get-Command -Times 0 -Exactly -ParameterFilter { $Name -eq 'unity' }
         Should -Invoke Invoke-WebRequest -Times 1 -Exactly
         Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like '*EVEN IF Personal already appears active*' }
-        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like '*Do not rename UnityEntitlementLicense.xml*' }
+        Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $Object -like '*Do not rename UnityEntitlementLicense.xml*' }
+        Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $Object -like '5. In File Explorer*' }
+        Should -Invoke Read-Host -Times 1 -Exactly -ParameterFilter { $Prompt -like 'Press Enter after completing steps 1–4*' }
+        Should -Invoke Read-Host -Times 0 -Exactly -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
     }
 
     It 'requires explicit consent before license preparation or repository writes' {
@@ -128,9 +132,11 @@ Describe 'Guided Unity CI setup' {
         Mock Read-Host {
             Set-Content -LiteralPath $global:UnityCiTest.LicensePath $global:UnityCiTest.LicenseText -NoNewline
             ''
-        } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        } -ParameterFilter { $Prompt -like 'Press Enter after completing steps 1–4*' }
         & $script:setup -LicensePath $script:licensePath
         ($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })[0].Input | Should -BeExactly $script:licenseText
+        Should -Invoke Read-Host -Times 0 -Exactly -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
+        Should -Invoke Write-Host -Times 0 -Exactly -ParameterFilter { $Object -like '5. In File Explorer*' }
     }
 
     It 'uses the standard ProgramData license path when Enter is pressed without -LicensePath' {
@@ -155,9 +161,11 @@ Describe 'Guided Unity CI setup' {
         Mock Read-Host { '"' + $global:UnityCiTest.LicensePath + '"' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
         & $script:setup -LicensePath (Join-Path $TestDrive 'missing.ulf')
         ($script:calls | Where-Object { $_.Arguments[0] -eq 'secret' })[0].Input | Should -BeExactly $script:licenseText
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { $Object -like '5. In File Explorer*' }
     }
 
     It 'allows cancellation at the license prompt before repository writes' {
+        Remove-Item -LiteralPath $script:licensePath
         Mock Read-Host { ' cancel ' } -ParameterFilter { $Prompt -like 'Personal .ulf file path*' }
         { & $script:setup -LicensePath $script:licensePath } | Should -Throw '*cancelled*'
         @($script:calls | Where-Object { $_.Arguments[0] -in @('secret', 'variable') -or $_.Arguments -contains 'PUT' }).Count | Should -Be 0
