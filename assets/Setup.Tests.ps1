@@ -309,13 +309,23 @@ Describe 'Build workflow runtime compatibility' {
 
     It 'uses tagged releases for all workflow actions' {
         $script:workflow | Should -Match '(?m)^\s+- uses: actions/checkout@v6\.1\.0$'
+        $script:workflow | Should -Match '(?m)^\s+- uses: actions/cache@v4\.2\.4$'
         $script:workflow | Should -Match '(?m)^\s+uses: game-ci/unity-builder@v5\.0\.0$'
         $script:workflow | Should -Match '(?m)^\s+uses: actions/upload-artifact@v6\.0\.0$'
         $actionReferences = [regex]::Matches($script:workflow, '(?m)^\s+(?:-\s+)?uses: ([^\s]+)$')
-        $actionReferences.Count | Should -Be 3
+        $actionReferences.Count | Should -Be 4
         foreach ($actionReference in $actionReferences) {
             $actionReference.Groups[1].Value | Should -Match '@v\d+\.\d+\.\d+$'
         }
+    }
+
+    It 'produces Library caches on the default branch while retaining tag and manual builds' {
+        $script:workflow | Should -Match "(?ms)^on:\s+push:\s+branches:\s+- '\*\*'\s+tags:\s+- '\*\*'\s+workflow_dispatch:"
+        $script:workflow | Should -Match "(?m)^\s+if: \(github\.event_name != 'push' \|\| github\.ref_type == 'tag' \|\| github\.ref_name == github\.event\.repository\.default_branch\) && needs\.platforms\.outputs\.has_builds == 'true'$"
+    }
+
+    It 'caches the Library folder using the Unity version and package lockfile' {
+        $script:workflow | Should -Match "(?ms)^\s+- uses: actions/cache@v4\.2\.4\s+with:\s+path: Library\s+key: Library-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('ProjectSettings/ProjectVersion\.txt'\) \}\}-\$\{\{ hashFiles\('Packages/packages-lock\.json'\) \}\}"
     }
 
     It 'uploads WebGL files with index.html at the artifact root' {
