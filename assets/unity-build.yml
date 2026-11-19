@@ -2,6 +2,8 @@ name: Unity builds
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - '**'
   workflow_dispatch:
@@ -56,7 +58,7 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     needs: platforms
-    if: needs.platforms.outputs.has_builds == 'true'
+    if: (github.event_name != 'push' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch) && needs.platforms.outputs.has_builds == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false

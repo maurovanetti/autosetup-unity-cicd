@@ -319,6 +319,11 @@ Describe 'Build workflow runtime compatibility' {
         }
     }
 
+    It 'produces Library caches on the default branch while retaining tag and manual builds' {
+        $script:workflow | Should -Match "(?ms)^on:\s+push:\s+branches:\s+- '\*\*'\s+tags:\s+- '\*\*'\s+workflow_dispatch:"
+        $script:workflow | Should -Match "(?m)^\s+if: \(github\.event_name != 'push' \|\| github\.ref_type == 'tag' \|\| github\.ref_name == github\.event\.repository\.default_branch\) && needs\.platforms\.outputs\.has_builds == 'true'$"
+    }
+
     It 'caches the Library folder using the Unity version and package lockfile' {
         $script:workflow | Should -Match "(?ms)^\s+- uses: actions/cache@v4\.2\.4\s+with:\s+path: Library\s+key: Library-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('ProjectSettings/ProjectVersion\.txt'\) \}\}-\$\{\{ hashFiles\('Packages/packages-lock\.json'\) \}\}"
     }
