@@ -320,4 +320,8 @@ Describe 'Build workflow runtime compatibility' {
     It 'caches the Library folder using the Unity version and package lockfile' {
         $script:workflow | Should -Match "(?ms)^\s+- uses: actions/cache@v4\.2\.4\s+with:\s+path: Library\s+key: Library-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('ProjectSettings/ProjectVersion\.txt'\) \}\}-\$\{\{ hashFiles\('Packages/packages-lock\.json'\) \}\}"
     }
+
+    It 'uploads WebGL files with index.html at the artifact root' {
+        $script:workflow | Should -Match "matrix\.platform == 'WebGL' && 'build/WebGL/\*\*'"
+    }
 }
