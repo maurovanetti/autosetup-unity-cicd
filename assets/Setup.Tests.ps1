@@ -310,6 +310,8 @@ Describe 'Build workflow runtime compatibility' {
     It 'uses tagged releases for all workflow actions' {
         $script:workflow | Should -Match '(?m)^\s+- uses: actions/checkout@v6\.1\.0$'
         $script:workflow | Should -Match '(?m)^\s+- uses: actions/cache@v4\.2\.4$'
+        $script:workflow | Should -Match '(?m)^\s+uses: game-ci/unity-builder@v5\.0\.0$'
+        $script:workflow | Should -Match '(?m)^\s+uses: actions/upload-artifact@v6\.0\.0$'
         $actionReferences = [regex]::Matches($script:workflow, '(?m)^\s+(?:-\s+)?uses: ([^\s]+)$')
         $actionReferences.Count | Should -Be 4
         foreach ($actionReference in $actionReferences) {
